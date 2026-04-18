@@ -17,6 +17,8 @@ import os
 import base64
 import json
 import re
+from datetime import datetime
+from pathlib import Path
 
 # FastAPI: Pythonで高速なWebAPIを作るためのフレームワーク
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
@@ -93,6 +95,49 @@ class AnalysisResult(BaseModel):
 # ユーティリティ関数
 # =============================================================================
 
+# =============================================================================
+# ログユーティリティ
+# =============================================================================
+
+# ログの保存先ディレクトリ（main.py と同じ階層に logs/ フォルダを作成）
+LOG_DIR = Path(__file__).parent / "logs"
+
+def save_llm_log(step: str, prompt: str, response_text: str) -> None:
+    """
+    LLM へのプロンプトとレスポンスをファイルに保存する関数。
+
+    デバッグ時に「何を送って何が返ってきたか」を確認するために使います。
+
+    保存形式:
+        logs/YYYYMMDD_HHMMSS_<step>.json
+        例: logs/20260419_153012_step1_vision.json
+
+    @param step          ログのラベル（例: "step1_vision", "step2_websearch"）
+    @param prompt        LLM に送ったプロンプト文字列
+    @param response_text LLM から返ってきたテキスト
+    """
+    # ディレクトリがなければ作成する（exist_ok=True: すでにあってもエラーにしない）
+    LOG_DIR.mkdir(exist_ok=True)
+
+    # ファイル名にタイムスタンプを付けて一意にする
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    log_path = LOG_DIR / f"{timestamp}_{step}.json"
+
+    log_data = {
+        "timestamp": datetime.now().isoformat(),  # ISO形式の日時文字列
+        "step": step,
+        "prompt": prompt,
+        "response": response_text,
+    }
+
+    # ensure_ascii=False: 日本語をそのまま保存（\uXXXX にエスケープしない）
+    # indent=2: 読みやすいように 2スペースでインデント
+    with open(log_path, "w", encoding="utf-8") as f:
+        json.dump(log_data, f, ensure_ascii=False, indent=2)
+
+    print(f"📝 LLMログを保存しました: {log_path}")
+
+
 def build_analysis_prompt(
     ingredients_text: str,
     skin_type: str,
@@ -155,23 +200,31 @@ def extract_json_from_text(text: str) -> dict:
     """
     テキストの中から JSON 部分を抽出して dict に変換するユーティリティ関数。
 
-    Responses API の web_search を使った場合、モデルが JSON の前後に
-    説明文や引用を付け加えることがある。
-    re.search で {{ }} に囲まれた JSON ブロックを探して取り出す。
+    web_search 使用時にモデルが返すパターンに対応:
+      1. ```json ... ``` のマークダウンコードブロックで囲まれている
+      2. JSON の前後に説明文や引用リンクが付いている
     """
-    # まずそのままパースを試みる（JSON のみが返ってきた場合）
+    # ① マークダウンコードブロック (```json ... ``` / ``` ... ```) を除去する
+    # re.sub(パターン, 置換後, 対象文字列): パターンに一致した部分を置換する
+    cleaned = re.sub(r"```(?:json)?\s*", "", text)
+    cleaned = re.sub(r"```", "", cleaned).strip()
+
+    # ② そのままパースを試みる（コードブロック除去で解決する場合）
     try:
-        return json.loads(text)
+        return json.loads(cleaned)
     except json.JSONDecodeError:
         pass
 
-    # テキストの中から最初の { ～ 最後の } を取り出す
+    # ③ 最初の { から最後の } までを取り出して再試行
     # re.DOTALL: . が改行にもマッチするようにするフラグ
-    match = re.search(r"\{.*\}", text, re.DOTALL)
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
     if match:
-        return json.loads(match.group())
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
 
-    raise ValueError("レスポンスから JSON を抽出できませんでした")
+    raise ValueError(f"レスポンスから JSON を抽出できませんでした。レスポンス先頭: {text[:200]}")
 
 
 def parse_analysis_result(result_data: dict) -> AnalysisResult:
@@ -294,6 +347,10 @@ async def analyze_ingredients(
         # output_text: Responses API でのレスポンステキストの取得方法
         step1_data = json.loads(step1_resp.output_text)
 
+        # プロンプトと生レスポンスをファイルに保存（デバッグ用）
+        # 画像データは大きいためプロンプトのテキスト部分のみ保存する
+        save_llm_log("step1_vision", step1_prompt, step1_resp.output_text)
+
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -326,6 +383,7 @@ async def analyze_ingredients(
                 input=analysis_prompt,
                 text={"format": {"type": "json_object"}},
             )
+            save_llm_log("step1_analysis", analysis_prompt, analysis_resp.output_text)
             result_data = json.loads(analysis_resp.output_text)
             return parse_analysis_result(result_data)
 
@@ -373,7 +431,8 @@ async def analyze_ingredients(
 3. 総合的な相性スコアを算出する
 
 【返答形式】
-JSON のみで返答してください（説明文や引用は不要）。
+JSON のみで返答してください（説明文・引用・コードブロックは不要）。
+成分が多い場合は代表的な20種類までに絞ってください。
 
 {{
   "compatibility_score": 相性スコア(0-100の整数),
@@ -404,10 +463,13 @@ JSON のみで返答してください（説明文や引用は不要）。
                 model="gpt-4o-mini",
                 tools=[{"type": "web_search"}],
                 input=search_and_analyze_prompt,
+                # 成分リストが長くなりすぎてJSONが途中で切れないよう上限を設定
+                max_output_tokens=4096,
             )
 
             # web_search 使用時はモデルが余分なテキストを返す場合があるため
             # JSON 抽出ユーティリティで安全にパースする
+            save_llm_log("step2_websearch", search_and_analyze_prompt, step2_resp.output_text)
             result_data = extract_json_from_text(step2_resp.output_text)
             return parse_analysis_result(result_data)
 
