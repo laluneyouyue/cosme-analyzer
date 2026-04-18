@@ -13,12 +13,14 @@ import { analyzeCosmetic } from "../api";
 interface HomePageProps {
   profile: UserProfile; // ユーザープロファイル
   onNavigateToProfile: () => void; // プロファイル設定画面に移動する関数
+  onNavigateToHistory: () => void; // 履歴画面に移動する関数
   onAnalysisComplete: (result: AnalysisResult, imageUrl: string) => void; // 解析完了時に呼ばれる関数
 }
 
 export const HomePage: React.FC<HomePageProps> = ({
   profile,
   onNavigateToProfile,
+  onNavigateToHistory,
   onAnalysisComplete,
 }) => {
   // ローディング状態（解析中かどうか）
@@ -49,10 +51,15 @@ export const HomePage: React.FC<HomePageProps> = ({
     setSelectedFile(file);
     setError(null);
 
-    // URL.createObjectURL: ファイルオブジェクトからブラウザ内でのみ有効なURLを作成
-    // これにより画像をプレビュー表示できる
-    const objectUrl = URL.createObjectURL(file);
-    setPreviewUrl(objectUrl);
+    // FileReader: ファイルをブラウザで非同期に読み込むためのWeb API
+    // readAsDataURL を使うと画像を Base64 の data URL（文字列）として読み込める。
+    // data URL は localStorage に保存できるため、履歴機能で画像を永続化できる。
+    // （URL.createObjectURL は一時的なURLでページ更新後に無効になるため使わない）
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      setPreviewUrl(e.target?.result as string);
+    };
+    reader.readAsDataURL(file);
   };
 
   // 解析ボタンを押したときの処理
@@ -98,27 +105,29 @@ export const HomePage: React.FC<HomePageProps> = ({
           </h1>
           <p className="text-xs text-gray-400">✨ あなたの肌に合う成分を発見</p>
         </div>
-        {/* プロファイル設定ボタン */}
-        <button
-          onClick={onNavigateToProfile}
-          className="flex items-center gap-1 bg-pink-50 text-pink-500 px-3 py-1.5 rounded-full text-xs font-medium hover:bg-pink-100 transition-colors"
-        >
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            className="h-4 w-4"
-            fill="none"
-            viewBox="0 0 24 24"
-            stroke="currentColor"
+        {/* 右側ボタングループ */}
+        <div className="flex items-center gap-2">
+          {/* 履歴ボタン */}
+          <button
+            onClick={onNavigateToHistory}
+            className="flex items-center gap-1 bg-purple-50 text-purple-500 px-3 py-1.5 rounded-full text-xs font-medium hover:bg-purple-100 transition-colors"
           >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={2}
-              d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"
-            />
-          </svg>
-          プロファイル
-        </button>
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            履歴
+          </button>
+          {/* プロファイル設定ボタン */}
+          <button
+            onClick={onNavigateToProfile}
+            className="flex items-center gap-1 bg-pink-50 text-pink-500 px-3 py-1.5 rounded-full text-xs font-medium hover:bg-pink-100 transition-colors"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+            </svg>
+            設定
+          </button>
+        </div>
       </div>
 
       {/* メインコンテンツ */}

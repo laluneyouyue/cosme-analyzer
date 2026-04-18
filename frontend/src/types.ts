@@ -40,6 +40,14 @@ export interface AnalysisResult {
   summary: string; // 総合コメント
 }
 
+// 解析履歴1件分のデータ型
+export interface HistoryItem {
+  id: string;              // 一意のID（保存時のタイムスタンプ文字列）
+  date: string;            // 解析日時（ISO形式の文字列）
+  imageUrl: string;        // 画像のdata URL（ページ更新後も表示できるBase64形式）
+  result: AnalysisResult;  // 解析結果
+}
+
 // アプリ全体の画面（ページ）の状態を表す型
 // Union型: 複数の型のうちどれかひとつ、という意味
-export type AppPage = "home" | "profile" | "result";
+export type AppPage = "home" | "profile" | "result" | "history";
