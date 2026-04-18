@@ -24,6 +24,49 @@ import { HistoryPage } from "./components/HistoryPage";
 import type { AppPage, UserProfile, AnalysisResult, HistoryItem } from "./types";
 
 // =============================================================================
+// 画像圧縮ユーティリティ
+// =============================================================================
+
+/**
+ * data URL の画像を canvas で縮小・圧縮して返す非同期関数
+ *
+ * スマホ写真は数MB になることが多く、そのまま localStorage に保存すると
+ * 容量上限（約5MB）をすぐに超えてしまう。
+ * そのため、履歴への保存前に thumbnail サイズへ圧縮する。
+ *
+ * @param dataUrl  - 元画像の data URL（Base64文字列）
+ * @param maxWidth - 圧縮後の最大幅（px）。縦横比は維持される
+ * @param quality  - JPEG 品質（0〜1）。0.6 なら約 60% の品質
+ * @returns 圧縮後の data URL
+ */
+function compressImage(
+  dataUrl: string,
+  maxWidth = 480,
+  quality = 0.6
+): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      // canvas: ブラウザ上でピクセル単位の描画ができる HTML 要素
+      const canvas = document.createElement("canvas");
+
+      // 元画像が maxWidth より小さければ縮小しない（scale = 1）
+      const scale = Math.min(1, maxWidth / img.width);
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+
+      // canvas に画像を描画（この時点でリサイズされる）
+      const ctx = canvas.getContext("2d")!;
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+      // toDataURL: canvas の内容を指定フォーマット・品質で data URL に変換
+      resolve(canvas.toDataURL("image/jpeg", quality));
+    };
+    img.src = dataUrl;
+  });
+}
+
+// =============================================================================
 // localStorage のキー定数
 // =============================================================================
 const PROFILE_KEY = "cosme_analyzer_profile";
@@ -153,16 +196,19 @@ function App() {
   };
 
   // 解析が完了したときの処理
-  const handleAnalysisComplete = (result: AnalysisResult, imageUrl: string) => {
-    // 結果を表示用に保持
+  // async: 関数の中で await（非同期処理の完了を待つ）が使えるようになるキーワード
+  const handleAnalysisComplete = async (result: AnalysisResult, imageUrl: string) => {
+    // 結果と元画像（高画質）を現セッションの表示用に保持
     setAnalysisResult(result);
     setAnalyzedImageUrl(imageUrl);
-
-    // 履歴に追加して localStorage に永続化
-    const updated = addToHistory(history, result, imageUrl);
-    setHistory(updated);
-
     setCurrentPage("result");
+
+    // localStorage 保存用に画像を圧縮する
+    // await: compressImage は canvas 処理が非同期のため完了を待つ
+    // 表示は先に切り替え済みなので、圧縮が終わってから履歴を保存する
+    const compressedUrl = await compressImage(imageUrl);
+    const updated = addToHistory(history, result, compressedUrl);
+    setHistory(updated);
   };
 
   // ホーム画面に戻る
