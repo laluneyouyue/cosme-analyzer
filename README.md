@@ -1,0 +1,175 @@
+# コスメ成分相性解析アプリ 🌸
+
+コスメのパッケージ裏面を撮影するだけで、あなたの肌質やパーソナルカラーに合った成分かどうかをAIが判定してくれるアプリです。
+
+## ✨ アプリの機能
+
+- 📷 **カメラ撮影** — スマホの背面カメラでコスメの成分表をそのまま撮影
+- 🌍 **多言語対応** — 韓国語・英語の成分表も日本語に翻訳して解析
+- 💯 **相性スコア** — あなたのプロファイルとの相性を0〜100%で表示
+- 📊 **レーダーチャート** — 保湿・鎮静・エイジングケアなど成分の傾向を視覚化
+- 🟢🔴 **成分ハイライト** — 良い成分は緑、注意成分は赤で一目でわかる
+
+## 🛠️ 使用技術
+
+| 領域 | 技術 |
+|------|------|
+| フロントエンド | React 19 + TypeScript + Vite |
+| スタイリング | Tailwind CSS v4 |
+| グラフ描画 | Recharts |
+| HTTP通信 | Axios |
+| バックエンド | Python 3.11+ + FastAPI |
+| AI解析 | OpenAI API (gpt-4o-mini / Vision) |
+| 環境変数管理 | python-dotenv |
+
+## 📁 ディレクトリ構成
+
+```
+cosme-analyzer/
+├── frontend/                # フロントエンド (React + TypeScript)
+│   ├── src/
+│   │   ├── App.tsx          # ルートコンポーネント（画面切り替えの司令塔）
+│   │   ├── api.ts           # バックエンドとの通信処理
+│   │   ├── types.ts         # TypeScript型定義
+│   │   ├── index.css        # グローバルスタイル
+│   │   └── components/
+│   │       ├── HomePage.tsx    # ホーム画面（カメラ撮影）
+│   │       ├── ProfilePage.tsx # プロファイル設定画面
+│   │       └── ResultPage.tsx  # 解析結果画面
+│   ├── vite.config.ts       # Vite設定（Tailwindプラグイン、APIプロキシ）
+│   └── package.json
+│
+├── backend/                 # バックエンド (Python + FastAPI)
+│   ├── main.py              # FastAPIアプリ本体（APIエンドポイント定義）
+│   ├── requirements.txt     # Pythonパッケージの一覧
+│   └── .env.example         # 環境変数の設定例（これをコピーして.envを作成）
+│
+├── .gitignore               # Gitで管理しないファイルの設定
+└── README.md                # このファイル
+```
+
+## 🚀 ローカルでの起動手順
+
+### 必要なもの
+
+- **Node.js** 18以上（[公式サイト](https://nodejs.org/)からインストール）
+- **Python** 3.11以上（[公式サイト](https://www.python.org/)からインストール）
+- **OpenAI APIキー**（[platform.openai.com](https://platform.openai.com/api-keys) で取得）
+
+---
+
+### ステップ1: リポジトリをクローン（またはフォルダをダウンロード）
+
+```bash
+git clone <リポジトリのURL>
+cd cosme-analyzer
+```
+
+---
+
+### ステップ2: バックエンドのセットアップ
+
+```bash
+# backendフォルダに移動
+cd backend
+
+# Python仮想環境を作成（プロジェクト専用のPython環境）
+python -m venv .venv
+
+# 仮想環境を有効化
+# Windowsの場合:
+.venv\Scripts\activate
+
+# Mac/Linuxの場合:
+source .venv/bin/activate
+
+# 必要なパッケージをインストール
+pip install -r requirements.txt
+```
+
+---
+
+### ステップ3: 環境変数（.env）の設定
+
+```bash
+# .env.example をコピーして .env ファイルを作成
+# Windowsの場合:
+copy .env.example .env
+
+# Mac/Linuxの場合:
+cp .env.example .env
+```
+
+作成した `.env` ファイルをテキストエディタで開き、APIキーを設定します:
+
+```env
+OPENAI_API_KEY=sk-xxxxxxxxxxxxxxxxxxxxxxxx  ← ここにあなたのAPIキーを入力
+```
+
+> ⚠️ **注意**: `.env` ファイルは絶対にGitにコミットしないでください！
+> `.gitignore` に設定済みなので、通常は自動的に除外されます。
+
+---
+
+### ステップ4: バックエンドサーバーを起動
+
+```bash
+# backendフォルダで以下を実行（仮想環境が有効な状態で）
+uvicorn main:app --reload --port 8000
+```
+
+ブラウザで `http://localhost:8000` にアクセスして
+`{"message": "コスメ成分解析APIが起動しています 🌸"}` と表示されれば成功です！
+
+---
+
+### ステップ5: フロントエンドのセットアップと起動
+
+**新しいターミナルを開いて**以下を実行します:
+
+```bash
+# frontendフォルダに移動
+cd cosme-analyzer/frontend
+
+# npmパッケージをインストール
+npm install
+
+# 開発サーバーを起動
+npm run dev
+```
+
+ブラウザで `http://localhost:5173` にアクセスするとアプリが表示されます 🎉
+
+---
+
+## 📱 スマホで試す方法
+
+開発サーバーを起動した状態で、スマホのブラウザから
+`http://[パソコンのIPアドレス]:5173` にアクセスすると
+スマホでも動作確認できます。
+
+パソコンのIPアドレスは以下のコマンドで確認できます:
+- Windows: `ipconfig` → IPv4アドレス
+- Mac/Linux: `ifconfig` または `ip addr`
+
+## 🔑 APIの仕様
+
+バックエンドが起動中に `http://localhost:8000/docs` にアクセスすると、
+FastAPIが自動生成するAPIドキュメント（Swagger UI）を確認できます。
+
+### エンドポイント一覧
+
+| メソッド | パス | 説明 |
+|--------|------|------|
+| GET | `/` | 動作確認用 |
+| POST | `/analyze` | 画像解析（メイン機能） |
+
+## 🤝 学習ポイント
+
+このプロジェクトは初学者がAPI連携とUI構築を学ぶために設計されています。
+
+- **`frontend/src/api.ts`** — axiosでのHTTPリクエスト、FormDataの使い方
+- **`frontend/src/App.tsx`** — ReactのuseStateによる画面状態管理
+- **`frontend/src/components/HomePage.tsx`** — input[type=file]とカメラ起動の実装
+- **`frontend/src/components/ResultPage.tsx`** — Rechartsのレーダーチャートの使い方
+- **`backend/main.py`** — FastAPIのエンドポイント定義、OpenAI Vision APIの呼び出し方
