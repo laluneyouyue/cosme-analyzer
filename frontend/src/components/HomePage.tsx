@@ -162,10 +162,10 @@ export const HomePage: React.FC<HomePageProps> = ({
           {!previewUrl && (
             <div className="px-4 pt-4 pb-2">
               <p className="text-sm font-semibold text-gray-700 text-center">
-                コスメの成分表を撮影してください
+                コスメのパッケージを撮影してください
               </p>
               <p className="text-xs text-gray-400 text-center mt-1">
-                パッケージ裏面の成分表示がはっきり映るように撮影すると精度が上がります
+                成分表がなくても商品名からAIが自動で成分を調べます 🔍
               </p>
             </div>
           )}
@@ -315,7 +315,7 @@ export const HomePage: React.FC<HomePageProps> = ({
             💡 使い方のコツ
           </p>
           <ul className="text-xs text-gray-400 space-y-1 list-none">
-            <li>📍 成分表示部分にカメラを近づけて撮影</li>
+            <li>📦 成分表がなくてもOK！商品名が見えればAIが調べます</li>
             <li>💡 明るい場所で撮影すると文字が読みやすくなります</li>
             <li>🔍 ブレないようにしっかり固定して撮影</li>
           </ul>
