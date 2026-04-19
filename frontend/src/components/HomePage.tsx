@@ -33,13 +33,18 @@ export const HomePage: React.FC<HomePageProps> = ({
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   // useRef: DOMの要素に直接アクセスするためのReactの仕組み
-  // ここでは隠れているinput要素をプログラムからクリックするために使う
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  // カメラ用とライブラリ用で input 要素を分けることで、それぞれの動作を確実に制御する
+  const cameraInputRef = useRef<HTMLInputElement>(null);   // capture="environment" あり → カメラ直起動
+  const libraryInputRef = useRef<HTMLInputElement>(null);  // capture なし → ライブラリ選択
 
   // カメラボタンを押したときの処理
-  // 非表示のinput[type="file"]要素をプログラムからクリックする
   const handleCameraClick = () => {
-    fileInputRef.current?.click(); // ?. はオプショナルチェーン：要素がnullでない場合のみ実行
+    cameraInputRef.current?.click();
+  };
+
+  // ライブラリボタンを押したときの処理
+  const handleLibraryClick = () => {
+    libraryInputRef.current?.click();
   };
 
   // ファイルが選択されたときの処理
@@ -174,64 +179,84 @@ export const HomePage: React.FC<HomePageProps> = ({
                 alt="撮影した画像のプレビュー"
                 className="w-full object-cover max-h-72"
               />
-              {/* 画像を撮り直すボタン */}
-              <button
-                onClick={handleCameraClick}
-                className="absolute bottom-3 right-3 bg-white/90 backdrop-blur-sm text-gray-700 text-xs px-3 py-1.5 rounded-full shadow-md font-medium"
-              >
-                撮り直す
-              </button>
+              {/* 撮り直す / ライブラリから選び直す */}
+              <div className="absolute bottom-3 right-3 flex gap-2">
+                <button
+                  onClick={handleLibraryClick}
+                  className="bg-white/90 backdrop-blur-sm text-gray-700 text-xs px-3 py-1.5 rounded-full shadow-md font-medium"
+                >
+                  ライブラリ
+                </button>
+                <button
+                  onClick={handleCameraClick}
+                  className="bg-white/90 backdrop-blur-sm text-gray-700 text-xs px-3 py-1.5 rounded-full shadow-md font-medium"
+                >
+                  撮り直す
+                </button>
+              </div>
             </div>
           ) : (
-            /* 大きなカメラボタン */
-            <div className="px-4 pb-4">
+            /* カメラ・ライブラリ選択ボタン */
+            <div className="px-4 pb-4 space-y-3">
+              {/* カメラ起動ボタン（大） */}
               <button
                 onClick={handleCameraClick}
-                className="w-full bg-gradient-to-br from-pink-400 to-purple-400 rounded-2xl flex flex-col items-center justify-center py-12 gap-3 shadow-inner hover:shadow-lg active:scale-95 transition-all"
+                className="w-full bg-gradient-to-br from-pink-400 to-purple-400 rounded-2xl flex flex-col items-center justify-center py-10 gap-3 shadow-inner hover:shadow-lg active:scale-95 transition-all"
                 aria-label="カメラを起動して撮影する"
               >
-                {/* カメラアイコン（SVG） */}
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
-                  className="h-16 w-16 text-white drop-shadow-md"
+                  className="h-14 w-14 text-white drop-shadow-md"
                   fill="none"
                   viewBox="0 0 24 24"
                   stroke="currentColor"
                 >
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"
-                  />
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={1.5}
-                    d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"
-                  />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
                 </svg>
                 <span className="text-white font-bold text-lg drop-shadow">
-                  📷 タップして撮影
+                  📷 カメラで撮影
                 </span>
-                <span className="text-white/70 text-xs">
-                  またはライブラリから選択
+              </button>
+
+              {/* ライブラリ選択ボタン */}
+              {/* capture属性を付けないことでフォトライブラリが開く */}
+              <button
+                onClick={handleLibraryClick}
+                className="w-full bg-white border-2 border-pink-200 rounded-2xl flex items-center justify-center gap-2 py-3 hover:bg-pink-50 active:scale-95 transition-all"
+                aria-label="フォトライブラリから画像を選択する"
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-pink-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+                <span className="text-pink-500 font-medium text-sm">
+                  ライブラリから選択
                 </span>
               </button>
             </div>
           )}
         </div>
 
-        {/* 非表示のファイル入力要素 */}
-        {/* capture="environment": スマホの背面カメラを起動する属性 */}
-        {/* accept="image/*": 画像ファイルのみ受け付ける */}
+        {/* 非表示のファイル入力要素（カメラ用） */}
+        {/* capture="environment": この属性があるとスマホの背面カメラを直接起動する */}
         <input
-          ref={fileInputRef}
+          ref={cameraInputRef}
           type="file"
           accept="image/*"
           capture="environment"
           onChange={handleFileChange}
-          className="hidden" // 非表示にする（ボタンクリックでプログラムから起動する）
+          className="hidden"
+          aria-hidden="true"
+        />
+
+        {/* 非表示のファイル入力要素（ライブラリ用） */}
+        {/* capture属性なし: フォトライブラリの選択ダイアログが開く */}
+        <input
+          ref={libraryInputRef}
+          type="file"
+          accept="image/*"
+          onChange={handleFileChange}
+          className="hidden"
           aria-hidden="true"
         />
 
