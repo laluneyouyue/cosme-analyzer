@@ -146,6 +146,9 @@ npm install
 
 # 開発サーバーを起動
 npm run dev
+
+# LAN からアクセスしたい場合は、npm の引数分離を使います
+npm run dev -- --host
 ```
 
 ブラウザで `http://localhost:5173` にアクセスするとアプリが表示されます 🎉

@@ -64,9 +64,9 @@ const getRatingStyle = (rating: IngredientAnalysis["rating"]) => {
 // スコアに応じた色とメッセージを返すヘルパー関数
 const getScoreColor = (score: number) => {
   if (score >= 80) return { color: "text-emerald-500", message: "とっても相性◎" };
-  if (score >= 60) return { color: "text-blue-500", message: "比較的相性良好" };
-  if (score >= 40) return { color: "text-yellow-500", message: "普通の相性" };
-  return { color: "text-red-500", message: "注意が必要" };
+  if (score >= 60) return { color: "text-blue-500", message: "相性はいい感じ" };
+  if (score >= 40) return { color: "text-yellow-500", message: "相性はまずまず" };
+  return { color: "text-red-500", message: "ちょっと注意が必要かも" };
 };
 
 export const ResultPage: React.FC<ResultPageProps> = ({

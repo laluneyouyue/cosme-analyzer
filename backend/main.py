@@ -171,6 +171,9 @@ def build_analysis_prompt(
 2. 各成分のプロファイルへの適合度を評価する
 3. 総合的な相性スコアを算出する
 
+【注意】
+- 水（Water / Aqua / 精製水）はほぼ全ての化粧品に含まれる当たり前の成分なので、ingredients には含めないでください
+
 【返答形式】
 必ず以下のJSON形式のみで返答してください。それ以外のテキストは一切含めないでください。
 
@@ -227,6 +230,18 @@ def extract_json_from_text(text: str) -> dict:
     raise ValueError(f"レスポンスから JSON を抽出できませんでした。レスポンス先頭: {text[:200]}")
 
 
+# 解析結果に載せても意味がない当たり前の成分（水）の表記ゆれ一覧
+# プロンプトでも除外を指示しているが、モデルが従わない場合に備えてここでも除外する
+TRIVIAL_INGREDIENT_NAMES = {"水", "精製水", "water", "aqua", "정제수"}
+
+
+def is_trivial_ingredient(ingredient: dict) -> bool:
+    """成分が「水」などの表示不要な当たり前成分かどうかを判定する"""
+    name = (ingredient.get("name") or "").strip().lower()
+    original = (ingredient.get("original_name") or "").strip().lower()
+    return name in TRIVIAL_INGREDIENT_NAMES or original in TRIVIAL_INGREDIENT_NAMES
+
+
 def parse_analysis_result(result_data: dict) -> AnalysisResult:
     """
     dict から AnalysisResult Pydantic モデルを組み立てるユーティリティ関数。
@@ -236,6 +251,7 @@ def parse_analysis_result(result_data: dict) -> AnalysisResult:
     ingredients = [
         IngredientAnalysis(**ingredient)
         for ingredient in result_data["ingredients"]
+        if not is_trivial_ingredient(ingredient)
     ]
     return AnalysisResult(
         compatibility_score=result_data["compatibility_score"],
@@ -429,6 +445,9 @@ async def analyze_ingredients(
 1. 成分名が外国語（韓国語・英語など）の場合は日本語に翻訳する
 2. 各成分のプロファイルへの適合度を評価する
 3. 総合的な相性スコアを算出する
+
+【注意】
+- 水（Water / Aqua / 精製水）はほぼ全ての化粧品に含まれる当たり前の成分なので、ingredients には含めないでください
 
 【返答形式】
 JSON のみで返答してください（説明文・引用・コードブロックは不要）。
