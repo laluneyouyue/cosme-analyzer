@@ -17,11 +17,13 @@ import os
 import base64
 import json
 import re
+# secrets: 暗号的に安全な比較を行うための標準ライブラリ
+import secrets
 from datetime import datetime
 from pathlib import Path
 
 # FastAPI: Pythonで高速なWebAPIを作るためのフレームワーク
-from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Header
 # CORS: フロントエンド(別のポート)からのリクエストを許可するための設定
 from fastapi.middleware.cors import CORSMiddleware
 # Pydantic: データの型チェックとバリデーションを行うライブラリ
@@ -48,11 +50,25 @@ app = FastAPI(
 # =============================================================================
 # CORS（クロスオリジンリソース共有）の設定
 # =============================================================================
+# 許可するアクセス元（オリジン）は環境変数から読み込む。
+# ローカル開発では Vite の開発サーバー、本番では Cloudflare Pages のURLになるため、
+# コードに直接書かず、環境ごとに差し替えられるようにする。カンマ区切りで複数指定可。
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get(
+        "ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:3000"
+    ).split(",")
+    if origin.strip()
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
+    allow_origins=ALLOWED_ORIGINS,
+    # Cookie やログインセッションを使っていないので False にする。
+    # True のままだと不要な権限を開けたままになる。
+    allow_credentials=False,
+    # 実際に使うメソッドだけに絞る（このAPIは GET と POST しか使わない）
+    allow_methods=["GET", "POST"],
     allow_headers=["*"],
 )
 
@@ -63,7 +79,32 @@ openai_api_key = os.environ.get("OPENAI_API_KEY")
 if not openai_api_key:
     print("⚠️  警告: OPENAI_API_KEYが設定されていません。.envファイルを確認してください。")
 
-client = OpenAI(api_key=openai_api_key)
+# timeout: 応答が返ってこないときに何秒で諦めるか。
+#   指定しないと延々と待ち続け、画面が固まったままになる。
+#   Cloudflare は100秒でリクエストを打ち切るため、それより短くしておく。
+# max_retries: 失敗時の自動リトライ回数。多いと待ち時間が伸びるので1回に抑える。
+client = OpenAI(api_key=openai_api_key, timeout=60.0, max_retries=1)
+
+# =============================================================================
+# アプリの設定（環境変数から読み込む）
+# =============================================================================
+
+# 合言葉。Cloudflare 経由で来たリクエストかどうかを判定するために使う。
+# 未設定（ローカル開発時）ならチェックは行わない。
+APP_SECRET = os.environ.get("APP_SECRET", "")
+
+# LLM のやり取りをファイルに保存するか。
+# 本番では保存しない（ユーザーの肌質などの情報をサーバに残さないため）。
+# ローカルでデバッグしたいときだけ .env に SAVE_LLM_LOGS=true と書く。
+SAVE_LLM_LOGS = os.environ.get("SAVE_LLM_LOGS", "false").lower() == "true"
+
+# 受け付ける画像の上限サイズ（10MB）。
+# フロント側で送信前に縮小しているので通常は1MB未満だが、
+# 巨大なファイルでサーバのメモリを食い潰されないための保険。
+MAX_IMAGE_BYTES = 10 * 1024 * 1024
+
+# 受け付ける画像の種類。HEIC などは OpenAI 側が扱えないため弾く。
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
 
 # =============================================================================
 # データモデルの定義（Pydanticを使用）
@@ -116,6 +157,10 @@ def save_llm_log(step: str, prompt: str, response_text: str) -> None:
     @param prompt        LLM に送ったプロンプト文字列
     @param response_text LLM から返ってきたテキスト
     """
+    # 保存が無効なら何もせず抜ける（本番はこちら）
+    if not SAVE_LLM_LOGS:
+        return
+
     # ディレクトリがなければ作成する（exist_ok=True: すでにあってもエラーにしない）
     LOG_DIR.mkdir(exist_ok=True)
 
@@ -242,22 +287,71 @@ def is_trivial_ingredient(ingredient: dict) -> bool:
     return name in TRIVIAL_INGREDIENT_NAMES or original in TRIVIAL_INGREDIENT_NAMES
 
 
+# rating に入ってよい値の一覧。これ以外が来たら neutral に倒す。
+VALID_RATINGS = {"good", "bad", "neutral"}
+
+
+def clamp_score(value, default: int = 50) -> int:
+    """スコアを必ず 0〜100 の整数に収める。
+
+    LLM が 9999 や "高い" のような想定外の値を返しても、
+    グラフの描画が壊れないようにするための安全装置。
+    """
+    try:
+        return max(0, min(100, int(value)))
+    except (TypeError, ValueError):
+        return default
+
+
+def sanitize_ingredient(ingredient: dict) -> dict:
+    """LLM が返した成分1件を、想定内の値に整える。
+
+    【なぜ必要か】
+    LLM の出力は「外部からの入力」と同じ扱いをするのが原則。
+    画像の中に「これまでの指示を無視しろ」といった文字を仕込む
+    プロンプトインジェクションを受けても、想定外の値がそのまま
+    画面に流れ込まないようにする。
+    """
+    rating = str(ingredient.get("rating") or "").strip().lower()
+    if rating not in VALID_RATINGS:
+        rating = "neutral"
+
+    return {
+        "name": str(ingredient.get("name") or "不明な成分")[:60],
+        "original_name": str(ingredient.get("original_name") or "")[:60],
+        "rating": rating,
+        "description": str(ingredient.get("description") or "")[:120],
+    }
+
+
 def parse_analysis_result(result_data: dict) -> AnalysisResult:
     """
     dict から AnalysisResult Pydantic モデルを組み立てるユーティリティ関数。
     2つのステップで同じ変換が必要なため共通化しています。
+
+    ここで値の範囲や種類を検証してから返すことで、
+    LLM が何を返してもフロントエンドが壊れないようにしています。
     """
-    radar_chart = RadarChartData(**result_data["radar_chart"])
+    radar_source = result_data.get("radar_chart") or {}
+    radar_chart = RadarChartData(
+        moisturizing=clamp_score(radar_source.get("moisturizing")),
+        soothing=clamp_score(radar_source.get("soothing")),
+        anti_aging=clamp_score(radar_source.get("anti_aging")),
+        brightening=clamp_score(radar_source.get("brightening")),
+        safety=clamp_score(radar_source.get("safety")),
+    )
+
     ingredients = [
-        IngredientAnalysis(**ingredient)
-        for ingredient in result_data["ingredients"]
-        if not is_trivial_ingredient(ingredient)
+        IngredientAnalysis(**sanitize_ingredient(ingredient))
+        for ingredient in (result_data.get("ingredients") or [])
+        if isinstance(ingredient, dict) and not is_trivial_ingredient(ingredient)
     ]
+
     return AnalysisResult(
-        compatibility_score=result_data["compatibility_score"],
+        compatibility_score=clamp_score(result_data.get("compatibility_score")),
         radar_chart=radar_chart,
         ingredients=ingredients,
-        summary=result_data["summary"],
+        summary=str(result_data.get("summary") or "")[:300],
     )
 
 # =============================================================================
@@ -277,6 +371,9 @@ async def analyze_ingredients(
     personal_color: str = Form(default="ブルベ夏"),
     desired_effects: str = Form(default="保湿・透明感"),
     avoid_ingredients: str = Form(default=""),
+    # Header: HTTPヘッダーの値を受け取る仕組み。
+    # x_app_secret という引数名は自動的に "X-App-Secret" ヘッダーに対応する。
+    x_app_secret: str = Header(default=""),
 ):
     """
     コスメ画像と成分を解析するメインエンドポイント。
@@ -286,14 +383,46 @@ async def analyze_ingredients(
     """
 
     # -------------------------------------------------------------------------
-    # 画像の読み込みと Base64 エンコード
+    # 合言葉の検証
     # -------------------------------------------------------------------------
+    # 本番では Cloudflare 側が X-App-Secret ヘッダーを付けて転送してくる。
+    # 一致しないリクエスト（サーバのURLを直接叩かれた等）はここで拒否する。
+    # APP_SECRET が未設定のローカル開発では、この検証は素通りする。
+    #
+    # secrets.compare_digest: 1文字目が違っても最後まで比較する関数。
+    #   普通の == は途中で打ち切るため「何文字目まで合っていたか」が
+    #   応答時間の差として漏れる。秘密の値を比べるときはこちらを使う。
+    if APP_SECRET and not secrets.compare_digest(x_app_secret, APP_SECRET):
+        raise HTTPException(status_code=401, detail="アクセスが許可されていません")
+
+    # -------------------------------------------------------------------------
+    # 画像の検証と Base64 エンコード
+    # -------------------------------------------------------------------------
+    # 受け取ったデータを信用せず、種類とサイズを先に確認する。
+    if image.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail="対応していない画像形式です。JPEG / PNG / WebP を使用してください。",
+        )
+
     try:
         image_data = await image.read()
-        base64_image = base64.b64encode(image_data).decode("utf-8")
-        content_type = image.content_type or "image/jpeg"
     except Exception as e:
-        raise HTTPException(status_code=400, detail=f"画像の読み込みに失敗しました: {str(e)}")
+        print(f"[ERROR] 画像の読み込みに失敗: {e}")
+        raise HTTPException(status_code=400, detail="画像の読み込みに失敗しました。")
+
+    if not image_data:
+        raise HTTPException(status_code=400, detail="画像が空です。")
+
+    if len(image_data) > MAX_IMAGE_BYTES:
+        # 413 = Payload Too Large（送られたデータが大きすぎる）
+        raise HTTPException(
+            status_code=413,
+            detail="画像サイズが大きすぎます（10MBまで）。",
+        )
+
+    base64_image = base64.b64encode(image_data).decode("utf-8")
+    content_type = image.content_type or "image/jpeg"
 
     # =========================================================================
     # Step 1: Responses API + Vision で画像から成分を読み取る
@@ -358,6 +487,10 @@ async def analyze_ingredients(
             # text.format: Responses API でレスポンス形式を指定する方法
             # json_object を指定するとモデルが必ず JSON を返すよう強制される
             text={"format": {"type": "json_object"}},
+            # temperature: 回答のばらつき具合を決めるパラメータ（0〜2）。
+            # 既定値では毎回わずかに違う答えを返すため、同じ画像でも結果がブレる。
+            # 0 にすると「一番もっともらしい答え」だけを選ぶようになり、再現性が上がる。
+            temperature=0,
         )
 
         # output_text: Responses API でのレスポンステキストの取得方法
@@ -368,9 +501,12 @@ async def analyze_ingredients(
         save_llm_log("step1_vision", step1_prompt, step1_resp.output_text)
 
     except Exception as e:
+        # 詳細はサーバのログにだけ出す。
+        # 例外の文面には内部の構成情報が含まれることがあるため利用者には見せない。
+        print(f"[ERROR] Step 1 (Vision) 失敗: {e}")
         raise HTTPException(
             status_code=500,
-            detail=f"Step 1 (Vision) の処理に失敗しました: {str(e)}",
+            detail="画像の解析に失敗しました。時間をおいて再度お試しください。",
         )
 
     # =========================================================================
@@ -398,22 +534,27 @@ async def analyze_ingredients(
                 model="gpt-4o-mini",
                 input=analysis_prompt,
                 text={"format": {"type": "json_object"}},
+                # 同じ成分・同じプロファイルなら同じスコアが出るようにする
+                temperature=0,
             )
             save_llm_log("step1_analysis", analysis_prompt, analysis_resp.output_text)
             result_data = json.loads(analysis_resp.output_text)
             return parse_analysis_result(result_data)
 
         except Exception as e:
+            print(f"[ERROR] 成分解析 失敗: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"成分解析の処理に失敗しました: {str(e)}",
+                detail="成分の解析に失敗しました。時間をおいて再度お試しください。",
             )
 
     else:
         # -----------------------------------------------------------------
         # 成分表が画像に見つからなかった場合 → Step 2: Web 検索で取得
         # -----------------------------------------------------------------
-        product_name = step1_data.get("product_name")
+        # 画像から読み取った文字列がそのまま次のプロンプトに混ざる唯一の経路なので、
+        # 長文の指示を仕込まれないよう100文字で切り詰める。
+        product_name = str(step1_data.get("product_name") or "").strip()[:100]
         if not product_name:
             raise HTTPException(
                 status_code=422,
@@ -484,6 +625,8 @@ JSON のみで返答してください（説明文・引用・コードブロッ
                 input=search_and_analyze_prompt,
                 # 成分リストが長くなりすぎてJSONが途中で切れないよう上限を設定
                 max_output_tokens=4096,
+                # 同じ成分・同じプロファイルなら同じスコアが出るようにする
+                temperature=0,
             )
 
             # web_search 使用時はモデルが余分なテキストを返す場合があるため
@@ -493,9 +636,10 @@ JSON のみで返答してください（説明文・引用・コードブロッ
             return parse_analysis_result(result_data)
 
         except Exception as e:
+            print(f"[ERROR] Step 2 (Web検索) 失敗: {e}")
             raise HTTPException(
                 status_code=500,
-                detail=f"Step 2 (Web検索) の処理に失敗しました: {str(e)}",
+                detail="商品情報の検索に失敗しました。成分表が写るように撮影してお試しください。",
             )
 
 
@@ -504,4 +648,7 @@ JSON のみで返答してください（説明文・引用・コードブロッ
 # =============================================================================
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+    # 第1引数は app オブジェクトではなく "ファイル名:変数名" の文字列で渡す。
+    # reload=True（保存時の自動再起動）は、uvicorn が自分でファイルを
+    # 読み直す必要があるため、文字列でないと起動を拒否される。
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
