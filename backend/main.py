@@ -9,11 +9,13 @@
 #   ・失敗を HTTP のステータスコードに翻訳して返す
 #
 # 【ファイル構成】
-#   main.py      ← ここ。Web の窓口
-#   config.py    設定値（環境変数・モデル名・上限値）
-#   schemas.py   返すデータの形と、LLM出力の検証
-#   prompts.py   LLM に送る文言
-#   analyzer.py  解析の流れと OpenAI とのやり取り
+#   main.py         ← ここ。Web の窓口
+#   config.py       設定値（環境変数・モデル名・上限値）
+#   schemas.py      返すデータの形と、LLM出力の検証
+#   prompts.py      LLM に送る文言
+#   analyzer.py     解析の流れと OpenAI とのやり取り
+#   scoring.py      採点の計算
+#   verification.py LLM出力と成分表原文の照合
 # =============================================================================
 
 import base64
@@ -27,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 import config
 from analyzer import analyze_cosmetic, AnalysisError, ImageUnreadableError
-from schemas import AnalysisResult
+from schemas import AnalysisResult, build_profile
 
 # =============================================================================
 # FastAPIアプリケーションの初期化
@@ -118,8 +120,9 @@ async def root():
 async def analyze_ingredients(
     image: UploadFile = File(..., description="コスメのパッケージ画像"),
     skin_type: str = Form(default="普通肌"),
-    personal_color: str = Form(default="ブルベ夏"),
-    desired_effects: str = Form(default="保湿・透明感"),
+    age_group: str = Form(default="30代"),
+    # 重視する効果はカンマ区切りで受け取る（例: "保湿・うるおい,透明感・くすみケア"）
+    desired_effects: str = Form(default=""),
     avoid_ingredients: str = Form(default=""),
     # Header: HTTPヘッダーの値を受け取る仕組み。
     # x_app_secret という引数名は自動的に "X-App-Secret" ヘッダーに対応する。
@@ -128,11 +131,24 @@ async def analyze_ingredients(
     """
     コスメ画像と成分を解析するメインエンドポイント。
 
-    Step 1: Vision で画像から成分を抽出（成分あり → 解析して返す）
-    Step 2: 成分なし → Web 検索で商品の成分を取得 → 解析して返す
+    Step 1: Vision で画像から成分を抽出
+      → 成分あり: そのまま分類させる
+      → 成分なし: Web 検索で成分を調べて分類させる
+    仕上げ: 分類結果に scoring.py が点数を付ける
+
+    パーソナルカラーは成分表から判定できないため受け取っていません。
+    （画面では設定できますが、解析には使いません。
+    　宣言していないフォーム項目は FastAPI が無視するため、送られても害はありません）
     """
     verify_app_secret(x_app_secret)
     base64_image, content_type = await read_validated_image(image)
+
+    profile = build_profile(
+        skin_type=skin_type,
+        age_group=age_group,
+        desired_effects=desired_effects,
+        avoid_ingredients=avoid_ingredients,
+    )
 
     # 解析そのものは analyzer.py に任せ、
     # 失敗したときだけ HTTP のステータスコードに翻訳する。
@@ -140,10 +156,7 @@ async def analyze_ingredients(
         return analyze_cosmetic(
             base64_image=base64_image,
             content_type=content_type,
-            skin_type=skin_type,
-            personal_color=personal_color,
-            desired_effects=desired_effects,
-            avoid_ingredients=avoid_ingredients,
+            profile=profile,
         )
     except ImageUnreadableError as e:
         # 422 = 送られた内容は正しい形だが、処理できる中身ではなかった。

@@ -32,12 +32,30 @@ export interface RadarChartData {
   safety: number; // 安全性
 }
 
+// 解析結果の「確からしさ」の型
+// バックエンドが成分表の原文と解析結果を突き合わせて算出する値です。
+// 点数だけを見せると、しっかり読めた写真の結果なのか、
+// 半分しか読めなかった写真の結果なのかが区別できないため、
+// 一緒に受け取って画面にも出しています。
+export interface Reliability {
+  source: "image" | "web"; // image=成分表を読んだ / web=商品名から検索した
+  verified: boolean; // 成分表の原文と突き合わせたか（web検索時は false）
+  source_count: number; // 成分表から数えた成分の件数
+  listed_count: number; // 解析結果に載った成分の件数
+  dropped_count: number; // 成分表に見当たらず除外した件数
+  omission_rate: number; // 取りこぼし率（0-100の%）
+  warnings: string[]; // 画面に出す注意文（問題なければ空配列）
+}
+
 // バックエンドAPIから返ってくる解析結果全体の型
 export interface AnalysisResult {
   compatibility_score: number; // 相性スコア (0-100)
   radar_chart: RadarChartData; // レーダーチャート用データ
   ingredients: IngredientAnalysis[]; // 成分リスト（配列）
   summary: string; // 総合コメント
+  // ? を付けて「無いかもしれない」型にしている。
+  // この項目を追加する前に保存された履歴には入っていないため。
+  reliability?: Reliability;
 }
 
 // 解析履歴1件分のデータ型

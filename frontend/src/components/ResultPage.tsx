@@ -19,6 +19,7 @@ import {
   Tooltip,           // マウスオーバー時のツールチップ
 } from "recharts";
 import type { AnalysisResult, IngredientAnalysis } from "../types";
+import { ReliabilityNote } from "./ReliabilityNote";
 
 interface ResultPageProps {
   result: AnalysisResult; // 解析結果データ
@@ -134,6 +135,9 @@ export const ResultPage: React.FC<ResultPageProps> = ({
             </p>
           </div>
         </div>
+
+        {/* 解析の信頼度（読み取れなかった分があれば注意を出す） */}
+        <ReliabilityNote reliability={result.reliability} />
 
         {/* 解析した画像のサムネイル */}
         <div className="bg-white rounded-2xl p-3 shadow-sm flex items-center gap-3">
