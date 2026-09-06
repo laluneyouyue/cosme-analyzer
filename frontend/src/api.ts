@@ -103,7 +103,7 @@ async function compressToJpeg(file: File): Promise<File> {
  * コスメ画像を解析するAPI呼び出し関数
  *
  * @param image - ユーザーが撮影した画像ファイル
- * @param profile - ユーザープロファイル（肌質、パーソナルカラーなど）
+ * @param profile - ユーザープロファイル（肌質・年代・重視する効果など）
  * @returns 解析結果（相性スコア、成分リストなど）
  */
 export async function analyzeCosmetic(
@@ -123,9 +123,16 @@ export async function analyzeCosmetic(
 
   // ユーザープロファイルの各フィールドをフォームデータに追加
   formData.append("skin_type", profile.skin_type);
-  formData.append("personal_color", profile.personal_color);
-  formData.append("desired_effects", profile.desired_effects);
+  formData.append("age_group", profile.age_group);
+  // 重視する効果は複数選べるので、カンマでつないだ1本の文字列にして送る。
+  // 配列のまま送る形式（desired_effects[] など）もありますが、
+  // 送る側と受ける側の解釈がずれやすいため、単純な文字列にしています。
+  formData.append("desired_effects", profile.desired_effects.join(","));
   formData.append("avoid_ingredients", profile.avoid_ingredients);
+
+  // パーソナルカラーは送っていません。
+  // 成分表から判定できる情報ではないため解析に使えず、
+  // 使わない個人情報を外部（OpenAI）に渡さないためです。
 
   // axiosでPOSTリクエストを送信
   const response = await axios.post<AnalysisResult>(

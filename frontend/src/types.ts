@@ -4,32 +4,83 @@
 // TypeScriptでは、データの「型」を事前に定義することで、
 // コードの間違いをエラーとして早期に発見できます。
 // このファイルでは、アプリ全体で使うデータの型を定義しています。
+//
+// 【バックエンドと必ずセットで変更する場所】
+// ここの型は backend/schemas.py の Pydantic モデルと対になっています。
+// どちらか片方だけ変えると、画面が期待するデータが来ない状態になります。
 // =============================================================================
 
-// ユーザープロファイルの型
+// =============================================================================
+// 評価の5軸
+// =============================================================================
+// 軸のキーと日本語名は backend/config.py の AXES / AXIS_LABELS と一致させます。
+// 「重視する効果」はこの日本語名そのままの文字列でAPIに送るため、
+// 1文字でもずれると、選んだ効果がバックエンドに伝わりません。
+
+export const AXES = [
+  "moisturizing",
+  "soothing",
+  "anti_aging",
+  "brightening",
+  "pore",
+] as const;
+
+// typeof AXES[number]: 上の配列の中身（文字列5種）だけを許す型を作る書き方。
+// これで存在しない軸名を書くとコンパイルエラーになります。
+export type AxisKey = (typeof AXES)[number];
+
+// プロフィールの選択肢と、結果画面の説明文で使う正式名称
+export const AXIS_LABELS: Record<AxisKey, string> = {
+  moisturizing: "保湿・うるおい",
+  soothing: "鎮静・肌あれケア",
+  anti_aging: "ハリ・エイジングケア",
+  brightening: "透明感・くすみケア",
+  pore: "毛穴・皮脂ケア",
+};
+
+// レーダーチャートの軸ラベル用の短い名前。
+// グラフの外周は場所が狭く、正式名称だと文字が重なって読めなくなるため。
+export const AXIS_SHORT_LABELS: Record<AxisKey, string> = {
+  moisturizing: "保湿",
+  soothing: "鎮静",
+  anti_aging: "ハリ",
+  brightening: "透明感",
+  pore: "毛穴",
+};
+
+// Record<AxisKey, number>: 5軸すべてをキーに持ち、値が数値のオブジェクト。
+// レーダーの外側（製品の実力）と内側（あなたが求めるもの）の両方で使います。
+export type AxisScores = Record<AxisKey, number>;
+
+// =============================================================================
+// ユーザープロファイル
+// =============================================================================
+
 // interface: オブジェクト（データの塊）の形を定義するTypeScriptの機能
 export interface UserProfile {
   skin_type: string; // 肌質
-  personal_color: string; // パーソナルカラー
-  desired_effects: string; // 重視する効果
-  avoid_ingredients: string; // 避けたい成分
+  age_group: string; // 年代
+  // パーソナルカラーは成分表から判定できないため、解析には送っていません。
+  // 画面には残していますが、現時点では表示だけの項目です。
+  personal_color: string;
+  desired_effects: string[]; // 重視する効果（AXIS_LABELS の値。複数選択）
+  avoid_ingredients: string; // 避けたい成分（カンマ区切りの自由入力）
 }
+
+// =============================================================================
+// 解析結果
+// =============================================================================
 
 // 個別の成分解析結果の型
 export interface IngredientAnalysis {
   name: string; // 日本語の成分名
   original_name: string; // 元の成分名（外国語の場合）
-  rating: "good" | "bad" | "neutral"; // 評価（good/bad/neutral のいずれか）
   description: string; // 解説
-}
-
-// レーダーチャート用のスコアデータの型
-export interface RadarChartData {
-  moisturizing: number; // 保湿力
-  soothing: number; // 鎮静力
-  anti_aging: number; // エイジングケア
-  brightening: number; // 透明感・美白
-  safety: number; // 安全性
+  rating: "good" | "bad" | "neutral"; // 評価（Pythonが決める）
+  position: number; // 成分表の何番目か（1始まり）
+  is_top_ranked: boolean; // 配合上位かどうか
+  is_avoided: boolean; // 「避けたい成分」に該当したか
+  irritation_risk: number; // 刺激リスク (0-3)
 }
 
 // 解析結果の「確からしさ」の型
@@ -49,22 +100,42 @@ export interface Reliability {
 
 // バックエンドAPIから返ってくる解析結果全体の型
 export interface AnalysisResult {
+  product_name: string; // 製品名（読み取れなければ「名称不明」）
+  product_summary: string; // どういう製品かの説明
   compatibility_score: number; // 相性スコア (0-100)
-  radar_chart: RadarChartData; // レーダーチャート用データ
-  ingredients: IngredientAnalysis[]; // 成分リスト（配列）
-  summary: string; // 総合コメント
+  score_reason: string; // なぜその点数なのかの説明
+  radar_product: AxisScores; // レーダー外側: この製品の実力
+  radar_need: AxisScores; // レーダー内側: あなたが求めるもの
+  axis_contributors: Record<string, string[]>; // 軸ごとに効いている成分名
+  irritation_level: "低" | "中" | "高";
+  irritation_reasons: string[]; // 刺激リスクの根拠になった成分名
+  ingredients: IngredientAnalysis[]; // 成分リスト
+  source: "image" | "web";
   // ? を付けて「無いかもしれない」型にしている。
   // この項目を追加する前に保存された履歴には入っていないため。
   reliability?: Reliability;
 }
 
+// =============================================================================
+// 履歴
+// =============================================================================
+
 // 解析履歴1件分のデータ型
 export interface HistoryItem {
-  id: string;              // 一意のID（保存時のタイムスタンプ文字列）
-  date: string;            // 解析日時（ISO形式の文字列）
-  imageUrl: string;        // 画像のdata URL（ページ更新後も表示できるBase64形式）
-  result: AnalysisResult;  // 解析結果
+  id: string; // 一意のID（保存時のタイムスタンプ文字列）
+  date: string; // 解析日時（ISO形式の文字列）
+  imageUrl: string; // 画像のdata URL（ページ更新後も表示できるBase64形式）
+  result: AnalysisResult; // 解析結果
+  // 【なぜプロフィールも一緒に保存するのか】
+  // 相性スコアは「そのときのプロフィール」との相性です。
+  // あとから肌質や重視する効果を変えると、過去の点数が何を意味するのか
+  // 分からなくなってしまうため、解析時の条件を写し取って一緒に残します。
+  profile?: UserProfile;
 }
+
+// =============================================================================
+// 画面の状態
+// =============================================================================
 
 // アプリ全体の画面（ページ）の状態を表す型
 // Union型: 複数の型のうちどれかひとつ、という意味

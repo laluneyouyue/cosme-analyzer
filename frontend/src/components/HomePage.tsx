@@ -143,16 +143,30 @@ export const HomePage: React.FC<HomePageProps> = ({
           <p className="text-xs font-semibold text-gray-500 mb-2">
             現在のプロファイル
           </p>
+          {/* 解析に実際に使う項目だけを出す。
+              パーソナルカラーは現在解析に使っていないため並べていない
+              （出すと「反映されている」と誤解されるため）。 */}
           <div className="flex flex-wrap gap-2">
             <span className="bg-pink-100 text-pink-600 text-xs px-2 py-1 rounded-full">
               {profile.skin_type}
             </span>
             <span className="bg-purple-100 text-purple-600 text-xs px-2 py-1 rounded-full">
-              {profile.personal_color}
+              {profile.age_group}
             </span>
-            <span className="bg-emerald-100 text-emerald-600 text-xs px-2 py-1 rounded-full">
-              {profile.desired_effects}
-            </span>
+            {profile.desired_effects.length > 0 ? (
+              profile.desired_effects.map((effect) => (
+                <span
+                  key={effect}
+                  className="bg-emerald-100 text-emerald-600 text-xs px-2 py-1 rounded-full"
+                >
+                  {effect}
+                </span>
+              ))
+            ) : (
+              <span className="bg-gray-100 text-gray-500 text-xs px-2 py-1 rounded-full">
+                重視する効果は未設定
+              </span>
+            )}
           </div>
         </div>
 

@@ -7,12 +7,14 @@
 // =============================================================================
 
 import React, { useState } from "react";
-import type { HistoryItem, AnalysisResult } from "../types";
+import type { HistoryItem } from "../types";
 
 interface HistoryPageProps {
   history: HistoryItem[];
   onBack: () => void;
-  onSelectItem: (result: AnalysisResult, imageUrl: string) => void;
+  // 履歴1件をまるごと渡す。結果だけでなく、解析当時のプロフィールも
+  // 結果画面で表示するため、項目を分解せずそのまま渡している。
+  onSelectItem: (item: HistoryItem) => void;
   onDeleteItems: (ids: string[]) => void; // 指定IDの履歴を削除する関数
 }
 
@@ -179,8 +181,8 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   // 選択モードかどうかでタップ時の動作を切り替える
                   onClick={() =>
                     isSelectMode
-                      ? toggleSelect(item.id)         // 選択モード: チェックを切り替え
-                      : onSelectItem(item.result, item.imageUrl) // 通常: 結果画面へ
+                      ? toggleSelect(item.id)  // 選択モード: チェックを切り替え
+                      : onSelectItem(item)     // 通常: 結果画面へ
                   }
                   className={`w-full bg-white rounded-2xl p-4 shadow-sm flex items-center gap-4 transition-all cursor-pointer
                     ${isSelectMode && isSelected
@@ -211,13 +213,21 @@ export const HistoryPage: React.FC<HistoryPageProps> = ({
                   {/* テキスト情報 */}
                   <div className="flex-1 min-w-0">
                     <p className="text-xs text-gray-400 mb-1">{formatDate(item.date)}</p>
-                    <p className={`text-2xl font-black leading-none ${getScoreColor(item.result.compatibility_score)}`}>
+                    {/* 製品名を一番上に置く。日付とスコアだけでは
+                        どれがどの商品の結果だったのか分からないため。 */}
+                    <p className="text-sm font-semibold text-gray-800 truncate">
+                      {item.result.product_name}
+                    </p>
+                    <p className={`text-2xl font-black leading-none mt-0.5 ${getScoreColor(item.result.compatibility_score)}`}>
                       {item.result.compatibility_score}
                       <span className="text-base font-bold">%</span>
                     </p>
-                    <p className="text-xs text-gray-500 mt-1 truncate">
-                      {item.result.summary}
-                    </p>
+                    {/* 重視した効果も添える。同じ製品でも条件が違えば点数が変わるため */}
+                    {item.profile && item.profile.desired_effects.length > 0 && (
+                      <p className="text-[11px] text-gray-400 mt-1 truncate">
+                        重視: {item.profile.desired_effects.join("・")}
+                      </p>
+                    )}
                   </div>
 
                   {/* 通常モードのみ右矢印を表示 */}
