@@ -107,8 +107,9 @@ def product_axis_scores(ingredients: list[dict]) -> tuple[dict, dict]:
 
     # 生の合計を 0〜100 に変換する。
     # AXIS_FULL_SCORE に達したら満点、という単純な比例。
+    # 満点の基準は軸ごとに違う（保湿だけ重い）。理由は config.py に書いています。
     scores = {
-        axis: min(100, round(raw_totals[axis] / config.AXIS_FULL_SCORE * 100))
+        axis: min(100, round(raw_totals[axis] / config.AXIS_FULL_SCORE[axis] * 100))
         for axis in config.AXES
     }
 
@@ -124,27 +125,46 @@ def product_axis_scores(ingredients: list[dict]) -> tuple[dict, dict]:
 
 
 # =============================================================================
-# ③ あなたが求めるもの（レーダーの内側）
+# ③ 採点対象の軸と、その重み
 # =============================================================================
 
-def need_axis_scores(desired_axes: list[str], age_group: str) -> dict:
-    """プロフィールから「求めるもの」の5軸を組み立てる。
+def axis_weights(desired_axes: list[str]) -> dict:
+    """どの軸を採点に使うかを決める。
 
-    選んだ軸は高く、選んでいない軸も「あれば嬉しい」の基準線を持たせます。
-    そのうえで、年齢による補正を加えます。
+    選んだ軸だけが 1.0、それ以外は 0.0 です。
+    重み 0 の軸は、いくら高くても低くても点数に影響しません。
+
+    【なぜ「求めていない軸」を計算から外すのか】
+    以前は5軸すべてに「求める水準」を置き、重なった割合で採点していました。
+    しかしそれだと、保湿だけを求めている人に保湿100点のクリームを見せても
+    71点にしかなりませんでした。求めてもいない4軸を満たせないことが、
+    減点として効いていたためです。
+
+    「求めていないものができていない」のは、その人にとって欠点ではない。
+    そう考えて、採点対象を本人が選んだ軸だけに限定しました。
+
+    ひとつも選んでいない場合だけ、5軸すべてを平等に見ます（＝総合力）。
+    このとき点数が低めに出るのは正しい挙動です。
+    ほとんどの製品は特定の効果に振っていて、万能ではないためです。
     """
-    needs = {
-        axis: (config.NEED_SELECTED if axis in desired_axes else config.NEED_BASELINE)
+    if not desired_axes:
+        return {axis: config.FOCUS_WEIGHT for axis in config.AXES}
+    return {
+        axis: (config.FOCUS_WEIGHT if axis in desired_axes else 0.0)
         for axis in config.AXES
     }
 
-    # 同じ成分でも年代によって「必要かどうか」が変わるので、要求側を動かす
-    adjustments = config.AGE_ADJUSTMENTS.get(age_group, {})
-    for axis, delta in adjustments.items():
-        if axis in needs:
-            needs[axis] = max(0, min(100, needs[axis] + delta))
 
-    return needs
+def age_hint_axes(desired_axes: list[str], age_group: str) -> list[str]:
+    """年代からの「この軸も見ておくといいかも」を返す。
+
+    点数には一切影響しません。すでに選んでいる軸は重複するので外します。
+
+    年代を点数に反映させないのは、本人が選んでいない軸で減点することに
+    なるからです。かわりに情報として画面に出し、選ぶかどうかは本人に任せます。
+    """
+    hints = config.AGE_FOCUS_AXES.get(age_group, [])
+    return [axis for axis in hints if axis not in desired_axes]
 
 
 # =============================================================================
@@ -226,27 +246,28 @@ def rate_ingredient(ingredient: dict, desired_axes: list[str], avoided: bool) ->
 
 def compatibility_score(
     product: dict,
-    needs: dict,
+    weights: dict,
     avoid_hit_count: int,
     irritation_level: str,
     skin_type: str,
 ) -> int:
     """相性スコア (0-100) を計算する。
 
-    考え方は「求めたものを、どれだけ満たせたか」。
+    考え方は「あなたが選んだ効果を、この製品がどれだけ持っているか」。
 
-        達成率 = Σ min(製品の実力, 求めるもの) / Σ 求めるもの
+        素点 = Σ(製品の軸スコア × 重み) / Σ重み
 
-    min を取っているので、求めていない軸がいくら高くても加点されません。
-    これは2重レーダーで「重なった面積 ÷ 求めた面積」を計算していることと
-    同じなので、画面の見た目と点数が必ず一致します。
+    重みは選んだ軸が1、それ以外が0なので、実際には
+    **選んだ軸の平均点そのもの**です。
+
+    レーダーチャートで選んだ軸の値を平均すれば、この数字になります。
+    グラフと点数が一致するので、「なぜこの点数なのか」を目で確かめられます。
     """
-    need_total = sum(needs.values())
-    if need_total <= 0:
+    total_weight = sum(weights.values())
+    if total_weight <= 0:
         return 0
 
-    overlap = sum(min(product[axis], needs[axis]) for axis in config.AXES)
-    base = overlap / need_total * 100
+    base = sum(product[axis] * weights[axis] for axis in config.AXES) / total_weight
 
     # 避けたい成分が入っていた分の減点
     avoid_penalty = min(
@@ -267,9 +288,12 @@ def compatibility_score(
 # ⑧ 点数の理由を組み立てる
 # =============================================================================
 
+# 説明文で「満たしている / ほどほど / 物足りない」を分ける境目（軸スコア）
+SCORE_STRONG = 70
+SCORE_WEAK = 40
+
 def build_score_reason(
     product: dict,
-    needs: dict,
     desired_axes: list[str],
     avoid_hit_count: int,
     irritation_level: str,
@@ -283,26 +307,29 @@ def build_score_reason(
     sentences = []
 
     if desired_axes:
-        # 求めた水準の8割を超えていれば「満たした」とみなす
-        met = [
-            config.AXIS_LABELS[axis]
-            for axis in desired_axes
-            if product[axis] >= needs[axis] * 0.8
-        ]
-        unmet = [
-            config.AXIS_LABELS[axis]
-            for axis in desired_axes
-            if product[axis] < needs[axis] * 0.8
-        ]
+        # 軸スコアをそのまま3段階に分けて言葉にする。
+        # 基準を製品ごとに動かさないので、別の製品と読み比べられる。
+        strong = [a for a in desired_axes if product[a] >= SCORE_STRONG]
+        weak = [a for a in desired_axes if product[a] < SCORE_WEAK]
+        middle = [a for a in desired_axes if a not in strong and a not in weak]
 
-        if met:
-            sentences.append(f"重視されている「{'」「'.join(met)}」を満たしています。")
-        if unmet:
-            sentences.append(f"「{'」「'.join(unmet)}」は控えめです。")
+        def names(axes):
+            return "」「".join(config.AXIS_LABELS[axis] for axis in axes)
+
+        if strong:
+            sentences.append(f"重視されている「{names(strong)}」をしっかり満たしています。")
+        if middle:
+            sentences.append(f"「{names(middle)}」はほどほどです。")
+        if weak:
+            sentences.append(f"「{names(weak)}」を求めるには物足りません。")
     else:
-        # 重視する効果が未設定のときは、製品の得意分野を伝える
+        # 重視する効果が未設定のときは、5軸の平均になることを明示する。
+        # 何も選ばないと点数が低めに出るので、その理由を伝えないと不親切。
         best = max(config.AXES, key=lambda axis: product[axis])
-        sentences.append(f"「{config.AXIS_LABELS[best]}」に強みのある製品です。")
+        sentences.append(
+            "重視する効果が未設定のため、5つの効果すべての平均で評価しています。"
+            f"この製品は「{config.AXIS_LABELS[best]}」に強みがあります。"
+        )
 
     if avoid_hit_count > 0:
         sentences.append(f"避けたい成分が{avoid_hit_count}件含まれるため減点しています。")
@@ -334,7 +361,7 @@ def score_ingredients(ingredients: list[dict], profile) -> dict:
     top_ranked_limit = max(1, round(total * config.TOP_RANKED_RATIO)) if total else 0
 
     product, contributors = product_axis_scores(ingredients)
-    needs = need_axis_scores(desired_axes, profile.age_group)
+    weights = axis_weights(desired_axes)
     irritation_level, irritation_reasons = irritation_assessment(ingredients)
 
     # 成分ごとに、避けたい成分かどうかと評価を決める
@@ -356,28 +383,34 @@ def score_ingredients(ingredients: list[dict], profile) -> dict:
             "irritation_risk": item["irritation_risk"],
         })
 
-    # 表示順: 避けたい成分 → bad → good → neutral、同じ区分なら配合順
-    rating_order = {"bad": 0, "good": 1, "neutral": 2}
-    scored_ingredients.sort(
-        key=lambda item: (
-            0 if item["is_avoided"] else 1,
-            rating_order.get(item["rating"], 3),
-            item["position"],
-        )
-    )
+    # 表示順は配合量の多い順（＝成分表に書かれている順）。
+    #
+    # 以前は「避けたい成分 → bad → good → neutral」の順に並べ替えて
+    # 注意すべきものを上に出していました。しかし手元の容器と見比べたときに
+    # 並びが違うと、どれがどれだか照合できません。
+    # 「成分表は配合量の多い順に並ぶ」というこのアプリの前提とも食い違います。
+    #
+    # 注意すべき成分を見落とさないための導線は、並び順以外に用意してあります。
+    #   ・刺激リスクのカードに、根拠になった成分名を出している
+    #   ・避けたい成分に当たった件数を、点数の理由文に書いている
+    #   ・リスト内でも色分け（赤／緑／灰）で区別できる
+    scored_ingredients.sort(key=lambda item: item["position"])
 
     score = compatibility_score(
-        product, needs, avoid_hit_count, irritation_level, profile.skin_type
+        product, weights, avoid_hit_count, irritation_level, profile.skin_type
     )
     reason = build_score_reason(
-        product, needs, desired_axes, avoid_hit_count, irritation_level, profile.skin_type
+        product, desired_axes, avoid_hit_count, irritation_level, profile.skin_type
     )
 
     return {
         "compatibility_score": score,
         "score_reason": reason,
         "radar_product": product,
-        "radar_need": needs,
+        # 点数に使った軸。画面ではこの軸を強調して「なぜこの点数か」を示す
+        "focus_axes": [axis for axis in config.AXES if weights[axis] > 0],
+        # 年代から提案するだけの軸。点数には影響しない
+        "age_hint_axes": age_hint_axes(desired_axes, profile.age_group),
         "axis_contributors": contributors,
         "irritation_level": irritation_level,
         "irritation_reasons": irritation_reasons,

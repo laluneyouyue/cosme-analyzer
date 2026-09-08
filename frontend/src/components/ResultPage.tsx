@@ -6,17 +6,20 @@
 // 【この画面の並び順の考え方】
 //   1. 何の製品か        … 製品名。何を見ているのか分からないと点数も読めない
 //   2. 相性スコアと理由  … 数字だけでなく「なぜ」を必ず添える
-//   3. 2重レーダー       … 点数の内訳。スコアの計算根拠そのもの
+//   3. レーダー          … この製品の実力。点数の内訳そのもの
 //   4. 刺激リスク        … 効果とは別の軸なので独立して出す
 //   5. 解析の信頼度      … どこまで確からしいか
 //   6. 成分リスト        … 詳細
 //   7. 解析時のプロフィール・免責
 //
-// 【2重レーダーについて】
-// 外側（ピンク）がこの製品の実力、内側（紫）があなたが求めるものです。
-// 相性スコアは「重なった面積 ÷ 求めた面積」で計算しているため、
-// グラフの見た目と点数が必ず一致します。
-// 「なんとなく高い/低い」ではなく、どの軸が足りないのかが目で分かります。
+// 【レーダーは1本だけにしている】
+// 以前は「あなたが求めるもの」を内側にもう1本描いていましたが、
+// 2つの多角形が重なると、どちらがどちらか読み取るのに手間がかかりました。
+// 知りたいのは「この製品に何がどれだけ入っているか」なので、
+// 製品の実力だけを描き、重視している軸には★を付けて区別しています。
+//
+// 相性スコアは★の付いた軸の平均そのものです。
+// グラフを見れば点数の理由が分かる、という関係は保っています。
 // =============================================================================
 
 import React from "react";
@@ -29,10 +32,14 @@ import {
   PolarRadiusAxis, // 中心から外周への目盛り
   Radar, // 実際のレーダー（塗りつぶしエリア）
   ResponsiveContainer, // 親要素のサイズに応じて自動リサイズ
-  Legend, // 凡例
-  Tooltip, // マウスオーバー時のツールチップ
 } from "recharts";
-import type { AnalysisResult, IngredientAnalysis, UserProfile } from "../types";
+import type { LabelProps } from "recharts";
+import type {
+  AnalysisResult,
+  AxisKey,
+  IngredientAnalysis,
+  UserProfile,
+} from "../types";
 import { AXES, AXIS_LABELS, AXIS_SHORT_LABELS } from "../types";
 import { ReliabilityNote } from "./ReliabilityNote";
 
@@ -96,14 +103,101 @@ export const ResultPage: React.FC<ResultPageProps> = ({
   const scoreStyle = getScoreColor(result.compatibility_score);
   const irritationStyle = getIrritationStyle(result.irritation_level);
 
+  // 点数の計算に使われた軸。Set にすると「含まれるか」の判定が速い
+  const focusSet = new Set(result.focus_axes);
+
   // レーダーチャート用のデータを変換
-  // Recharts は [{ subject: "ラベル", 系列名: 数値, ... }] の配列形式を期待している。
-  // 1つのオブジェクトに product と need の両方を入れることで2本重ねて描ける。
+  // Recharts は [{ subject: "ラベル", 系列名: 数値 }] の配列形式を期待している
   const radarData = AXES.map((axis) => ({
     subject: AXIS_SHORT_LABELS[axis],
     product: result.radar_product[axis],
-    need: result.radar_need[axis],
   }));
+
+  // 軸ラベル（グラフの外周の文字）から軸キーを引くための対応表。
+  // Recharts はラベル文字列しか渡してこないため、こちらで戻す必要がある。
+  const labelToAxis = new Map(
+    AXES.map((axis) => [AXIS_SHORT_LABELS[axis], axis])
+  );
+
+  // 軸ラベル（外周の文字）。重視している軸だけ★を付けて色を変える。
+  // 「点数はこの軸の平均です」を目で確かめられるようにするため。
+  //
+  // props をすべて任意にしているのは、Recharts が渡してくる型に合わせるため。
+  // 厳しく書くと「渡される型のほうが広い」と判定されて代入できない。
+  const renderAxisTick = (props: {
+    x?: string | number;
+    y?: string | number;
+    textAnchor?: string;
+    payload?: { value?: unknown };
+  }) => {
+    const label = String(props.payload?.value ?? "");
+    const axis = labelToAxis.get(label);
+    const isFocus = axis ? focusSet.has(axis) : false;
+    return (
+      <text
+        x={props.x}
+        y={props.y}
+        textAnchor={props.textAnchor as "start" | "middle" | "end" | undefined}
+        dominantBaseline="central"
+        fill={isFocus ? "#db2777" : "#9ca3af"}
+        fontSize={12}
+        fontWeight={isFocus ? 700 : 400}
+      >
+        {isFocus ? `★${label}` : label}
+      </text>
+    );
+  };
+
+  // 多角形の頂点に点数を出す。
+  //
+  // Recharts が渡してくるのは頂点の座標 (viewBox.x / viewBox.y) と index だけで、
+  // チャートの中心座標は渡ってこない。そのため「中心からどれだけ離すか」では
+  // なく「頂点からどちらへ何ピクセルずらすか」で位置を決める。
+  //
+  // ずらす向きは軸の並び順から計算する。
+  // RadarChart は真上（90度）から始まり、時計回りに軸を配置する。
+  //
+  // ずらす量は点数によって変える。
+  //   低い点数 … 頂点が中心付近に集まるので、外側へ出して重なりを避ける
+  //               （0点は全部が中心の1点に重なるため、これが無いと読めない）
+  //   高い点数 … 頂点が外周にあるので、内側へ入れて軸ラベルとの衝突を避ける
+  const LABEL_PUSH_OUT = 20; // 外側へずらす量(px)
+  const LABEL_PULL_IN = -16; // 内側へずらす量(px)
+  const LABEL_PULL_IN_FROM = 55; // この点数以上なら内側へ
+
+  const renderValueLabel = (props: LabelProps & { index?: number }) => {
+    const index = props.index ?? 0;
+    const axis = AXES[index];
+    if (!axis) return <></>;
+
+    const box = props.viewBox as { x?: number; y?: number } | undefined;
+    const x = box?.x ?? 0;
+    const y = box?.y ?? 0;
+    const score = result.radar_product[axis];
+
+    // 中心から見た、この軸の向き（画面座標なので y は符号が逆）
+    const angle = (Math.PI / 180) * (90 - (360 / AXES.length) * index);
+    const shift = score >= LABEL_PULL_IN_FROM ? LABEL_PULL_IN : LABEL_PUSH_OUT;
+
+    const isFocus = focusSet.has(axis);
+    return (
+      <text
+        x={x + Math.cos(angle) * shift}
+        y={y - Math.sin(angle) * shift}
+        textAnchor="middle"
+        dominantBaseline="central"
+        fontSize={13}
+        fontWeight={700}
+        fill={isFocus ? "#be185d" : "#6b7280"}
+        /* 数字が多角形の塗りと重なっても読めるよう、白で縁取りする */
+        stroke="#ffffff"
+        strokeWidth={3}
+        paintOrder="stroke"
+      >
+        {score}
+      </text>
+    );
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-pink-50 to-purple-50">
@@ -177,88 +271,63 @@ export const ResultPage: React.FC<ResultPageProps> = ({
           )}
         </div>
 
-        {/* 2重レーダーチャート */}
+        {/* レーダーチャート（この製品の実力だけを描く） */}
         <div className="bg-white rounded-2xl p-4 shadow-sm">
           <h2 className="text-sm font-bold text-gray-700 mb-1">
-            📊 求めるもの と 製品の実力
+            📊 この製品の実力
           </h2>
           <p className="text-xs text-gray-400 mb-2">
-            紫の内側があなたの希望、ピンクがこの製品。
-            重なっている面積がそのまま相性スコアです
+            {result.focus_axes.length < AXES.length
+              ? "★が付いているのが、あなたが重視している効果です。相性スコアはこの★の平均です"
+              : "重視する効果が未設定のため、5つすべてを平均しています"}
           </p>
-          {/* ResponsiveContainer: 親要素の横幅に合わせて自動サイズ調整 */}
+          {/* ResponsiveContainer: 親要素の横幅に合わせて自動サイズ調整。
+              margin は軸ラベルのぶんの余白。取らないと外周の文字が切れる。
+              isAnimationActive を切っているのは、点数ラベルの位置を
+              最終スコアから計算しているため。アニメーション中は頂点だけが
+              動いてラベルと合わなくなる。 */}
           <ResponsiveContainer width="100%" height={280}>
-            <RadarChart data={radarData}>
+            <RadarChart
+              data={radarData}
+              margin={{ top: 16, right: 28, bottom: 16, left: 28 }}
+            >
               {/* 背景グリッド（多角形の格子） */}
               <PolarGrid stroke="#e9d5ff" />
-              {/* 各軸のラベル */}
-              <PolarAngleAxis
-                dataKey="subject"
-                tick={{ fill: "#6b7280", fontSize: 12 }}
-              />
-              {/* domain を 0〜100 で固定するのが重要。
-                  指定しないとデータの最大値に合わせて自動で伸縮するため、
-                  2本のレーダーの目盛りがずれて「重なり」が嘘になる。 */}
-              <PolarRadiusAxis
-                domain={[0, 100]}
-                tick={false}
-                axisLine={false}
-              />
-              {/* 内側: あなたが求めるもの。先に描いて背面に置く */}
-              <Radar
-                name="あなたが求めるもの"
-                dataKey="need"
-                stroke="#a78bfa"
-                fill="#a78bfa"
-                fillOpacity={0.25}
-              />
-              {/* 外側: この製品の実力 */}
+              {/* 各軸のラベル（重視している軸だけ★を付ける） */}
+              <PolarAngleAxis dataKey="subject" tick={renderAxisTick} />
+              {/* domain を 0〜100 で固定する。指定しないとデータの最大値に
+                  合わせて自動で伸縮し、製品ごとに目盛りが変わってしまうため、
+                  別の製品の結果と見比べられなくなる。 */}
+              <PolarRadiusAxis domain={[0, 100]} tick={false} axisLine={false} />
               <Radar
                 name="この製品の実力"
                 dataKey="product"
                 stroke="#ec4899"
                 fill="#ec4899"
                 fillOpacity={0.35}
+                label={renderValueLabel}
+                isAnimationActive={false}
               />
-              <Legend
-                wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
-                iconType="circle"
-              />
-              <Tooltip formatter={(value) => [`${value}点`, ""]} />
             </RadarChart>
           </ResponsiveContainer>
 
-          {/* 軸ごとの内訳。グラフだけでは「何がその点数を作ったか」が分からない */}
-          <div className="mt-2 space-y-2">
-            {AXES.map((axis) => {
-              const contributors = result.axis_contributors[axis] ?? [];
-              return (
-                <div key={axis} className="text-xs">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <span className="text-gray-600 font-medium">
-                      {AXIS_LABELS[axis]}
-                    </span>
-                    <span className="text-gray-400 whitespace-nowrap">
-                      製品 {result.radar_product[axis]} / 希望{" "}
-                      {result.radar_need[axis]}
-                    </span>
-                  </div>
-                  {/* 横棒でも表す。数字だけより差が掴みやすい */}
-                  <div className="h-1.5 bg-gray-100 rounded-full mt-1 overflow-hidden">
-                    <div
-                      className="h-full bg-pink-400 rounded-full"
-                      style={{ width: `${result.radar_product[axis]}%` }}
-                    />
-                  </div>
-                  {contributors.length > 0 && (
-                    <p className="text-[11px] text-gray-400 mt-1">
-                      主に {contributors.join("・")}
-                    </p>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+          {/* 年代からの提案。
+              この軸を勝手に加点・減点に使うと「選んでいない軸で減点された」
+              という分かりにくさが戻ってくるので、情報として出すだけにしている。
+              ただし「点数には含めていません」と書くのはやめた。
+              内部の都合であって、読む人には意味が分からないため。 */}
+          {result.age_hint_axes.length > 0 && (
+            <div className="mt-3 bg-purple-50 border border-purple-100 rounded-xl p-3">
+              <p className="text-xs text-purple-700 leading-relaxed">
+                💡 {profile?.age_group ?? "あなた"}の方は
+                「
+                {result.age_hint_axes
+                  .map((axis) => AXIS_LABELS[axis as AxisKey] ?? axis)
+                  .join("」「")}
+                」もよく重視されています
+              </p>
+            </div>
+          )}
         </div>
 
         {/* 刺激リスク（効果とは性質が違うのでレーダーには載せない） */}

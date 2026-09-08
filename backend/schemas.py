@@ -95,8 +95,9 @@ class AnalysisResult(BaseModel):
     product_summary: str                     # この製品がどういう製品かの説明
     compatibility_score: int                 # 相性スコア (0-100)
     score_reason: str                        # なぜその点数なのかの説明（Python生成）
-    radar_product: AxisScores                # レーダー外側: この製品の実力
-    radar_need: AxisScores                   # レーダー内側: あなたが求めるもの
+    radar_product: AxisScores                # レーダー: この製品の実力
+    focus_axes: list[str]                    # 点数に使った軸のキー
+    age_hint_axes: list[str]                 # 年代からの提案（点数には影響しない）
     axis_contributors: dict[str, list[str]]  # 軸ごとに効いている成分名
     irritation_level: str                    # "低" / "中" / "高"
     irritation_reasons: list[str]            # 刺激リスクの根拠になった成分名

@@ -104,8 +104,12 @@ export interface AnalysisResult {
   product_summary: string; // どういう製品かの説明
   compatibility_score: number; // 相性スコア (0-100)
   score_reason: string; // なぜその点数なのかの説明
-  radar_product: AxisScores; // レーダー外側: この製品の実力
-  radar_need: AxisScores; // レーダー内側: あなたが求めるもの
+  radar_product: AxisScores; // レーダー: この製品の実力
+  // 点数の計算に使った軸。相性スコアはこの軸の平均そのものなので、
+  // 画面ではここを強調して「なぜこの点数か」を見えるようにする。
+  focus_axes: string[];
+  // 年代からの提案。点数には一切影響しない、情報としての提示。
+  age_hint_axes: string[];
   axis_contributors: Record<string, string[]>; // 軸ごとに効いている成分名
   irritation_level: "低" | "中" | "高";
   irritation_reasons: string[]; // 刺激リスクの根拠になった成分名

@@ -29,8 +29,8 @@ interface ProfilePageProps {
 // 選択肢の定数（変更されないデータ）
 const SKIN_TYPES = ["普通肌", "乾燥肌", "脂性肌", "混合肌", "敏感肌", "アトピー肌"];
 
-// 年代は backend/config.py の AGE_ADJUSTMENTS のキーと一致させる。
-// ここがずれると年齢による補正が効かなくなる（無言で無視される）。
+// 年代は backend/config.py の AGE_FOCUS_AXES のキーと一致させる。
+// ここがずれると年代の提案が出なくなる（無言で無視される）。
 const AGE_GROUPS = ["10代", "20代", "30代", "40代", "50代以上"];
 
 const PERSONAL_COLORS = [
